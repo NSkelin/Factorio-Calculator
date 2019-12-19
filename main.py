@@ -83,9 +83,9 @@ def add_machine_type(machine_type, variants=[]):
         connection.rollback()
 
 
-def ask_yes_or_no(object_to_add):
+def ask_yes_or_no(question: str):
     while True:
-        choice = input("Add another " + object_to_add + "? (y/n)")
+        choice = input(question + " (y/n)")
         if choice is "n":
             return False
         elif choice is "y":
@@ -129,13 +129,26 @@ def get_node_stats(node):
     return node
 
 
+# checks if the recipe was already used.
+# prevents infinite loops by recipes that produce a product used by recipes used to craft it
+def check_if_recipe_already_used(product_node, recipe_id):
+    ancestors = product_node.ancestors
+    for node in ancestors:
+        if "recipe id" in node.name:
+            if node.recipe_id == recipe_id[0]:
+                product_node.recursive_processing = True
+                product_node.recursive_recipe_id = node.recipe_id
+                return True
+    return False
+
+
 # Generates a tree starting at start_product as the root product.
 # Recipe branches are then created off the product for each recipe that makes the product.
 # From each recipe branch are ingredient branches which are also products of other recipes.
 # Repeats until there are no more ingredient branches possible.
 def generate_product_tree(start_product):
     try:
-        root_node = Node(start_product)
+        root_node = Node(start_product, recursive_processing=False)
         product_nodes = [root_node]
         while True:
             if len(product_nodes) == 0:
@@ -148,15 +161,7 @@ def generate_product_tree(start_product):
                 # For each recipe, create a node with its ID and attach it to the product node.
                 # Then find all the ingredients required for the recipe.
                 for recipe_id in recipe_ids:
-                    # checks if the recipe already exists in the nodes ancestors to prevent infinite loops
-                    recipe_exists = False
-                    ancestors = product_node.ancestors
-                    for node in ancestors:
-                        if "recipe id" in node.name:
-                            if node.recipe_id == recipe_id[0]:
-                                recipe_exists = True
-                    # if the recipe doesnt already exist
-                    if recipe_exists != True:
+                    if check_if_recipe_already_used(product_node, recipe_id) == False:
                         recipe_node = Node("recipe id: " + str(recipe_id[0]), parent=product_node,
                                            recipe_id=recipe_id[0])
                         stmt = "select `item name` from ingredients where `recipe id` = " + str(recipe_id[0]) + ";"
@@ -164,7 +169,7 @@ def generate_product_tree(start_product):
                         # For each ingredient, create a node with its name and attach it to the recipe node.
                         # Then add the ingredient to the next list of products
                         for ingredient_node in ingredients:
-                            ingredient_node = Node(ingredient_node[0], parent=recipe_node)
+                            ingredient_node = Node(ingredient_node[0], parent=recipe_node, recursive_processing=False)
                             new_product_nodes.append(ingredient_node)
             product_nodes = new_product_nodes
         return root_node
@@ -267,14 +272,18 @@ def calculate_energy_cost_gain():
 
     # calculate cost and gain for each node
     for node in PreOrderIter(filtered_tree):
-        if "recipe id" not in node.name:
-            if node.parent is None:
-                node.times_crafted = 1
-            else:
-                node.times_crafted = (node.amount_required / node.amount_produced) * node.parent.times_crafted
-            node.cost = (((node.machine_power_cost * node.recipe_speed) / node.machine_crafting_speed)
-                         * node.times_crafted)
-            node.gain = (node.power_per_item * node.amount_produced) * node.times_crafted
+        if node.parent is None:
+            node.times_crafted = 1
+        else:
+            node.times_crafted = (node.amount_required / node.amount_produced) * node.parent.times_crafted
+
+        if node.recursive_processing and ask_yes_or_no("Recursively use {}?".format(node.name)):
+            ancestor = find_by_attr(filtered_tree, node.recursive_recipe_id, name="recipe_id")
+            node.amount_required = (node.amount_required - (ancestor.amount_produced / node.times_crafted))
+            node.times_crafted = (node.amount_required / node.amount_produced) * node.parent.times_crafted
+        node.cost = (((node.machine_power_cost * node.recipe_speed) / node.machine_crafting_speed)
+                     * node.times_crafted)
+        node.gain = (node.power_per_item * node.amount_produced) * node.times_crafted
 
     # calculate the cumulative cost of a node from its descendants
     for node in PreOrderIter(filtered_tree):
@@ -326,11 +335,11 @@ while True:
             product = input("Enter the product name: ")
             quantity = input("Enter the amount of {} made by the recipe: ".format(product))
             products.append({'name': product, 'amt': quantity})
-            if ask_yes_or_no("product") is False:
+            if ask_yes_or_no("Add another product?") is False:
                 break
         # get ingredients for recipe
         while True:
-            if ask_yes_or_no("ingredient") is False:
+            if ask_yes_or_no("Add another ingredient?") is False:
                 break
             print("Creating ingredient...")
             ingredient = input("Enter the ingredient name: ")
@@ -340,7 +349,7 @@ while True:
         while True:
             machine_type = input("Enter a type of machine used in the recipe")
             types.append(machine_type)
-            if ask_yes_or_no("machine type") is False:
+            if ask_yes_or_no("Add another machine type?") is False:
                 break
         add_recipe(recipe_speed, products, ingredients, types)
 
@@ -352,7 +361,7 @@ while True:
             crafting_speed = input("enter the variants crafting speed: ")
             max_power_usage = input("enter the machines max power usage (kw/s)")
             variants.append({"version": version, "crafting_speed": crafting_speed, "max_power_usage": max_power_usage})
-            if ask_yes_or_no("variant") is False:
+            if ask_yes_or_no("Add another variant?") is False:
                 break
         add_machine_type(machine_type, variants)
 
