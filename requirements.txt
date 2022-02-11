@@ -1,6 +1,6 @@
 anytree==2.7.2
 mysql-connector-python==8.0.18
-protobuf==3.11.0
+protobuf==3.15.0
 PySide2==5.11.1a1.dev1530588877
 python-dotenv==0.10.3
 six==1.13.0
